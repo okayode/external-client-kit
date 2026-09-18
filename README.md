@@ -146,7 +146,7 @@ For the current authorized institution, no additional data or split preparation 
 
 ## 8. Federated Learning Workflow
 ```
-Clone private client kit
+Clone client kit
         ↓
 Install requirements
         ↓
