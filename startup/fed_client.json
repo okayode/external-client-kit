@@ -1,0 +1,26 @@
+{
+  "format_version": 2,
+  "servers": [
+    {
+      "name": "secure_project_3site",
+      "service": {
+        "scheme": "http"
+      },
+      "identity": "ec2-34-202-163-167.compute-1.amazonaws.com"
+    }
+  ],
+  "client": {
+    "ssl_private_key": "client.key",
+    "ssl_cert": "client.crt",
+    "ssl_root_cert": "rootCA.pem",
+    "fqsn": "external-site-1",
+    "is_leaf": true,
+    "connection_security": "mtls"
+  },
+  "overseer_agent": {
+    "path": "nvflare.ha.dummy_overseer_agent.DummyOverseerAgent",
+    "args": {
+      "sp_end_point": "ec2-34-202-163-167.compute-1.amazonaws.com:8002:8003"
+    }
+  }
+}

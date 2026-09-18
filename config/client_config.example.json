@@ -1,0 +1,4 @@
+{
+    "data_root": "/path/to/local/cifar10",
+    "train_idx_root": "/path/to/local/splits"
+}

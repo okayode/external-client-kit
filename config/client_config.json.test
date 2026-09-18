@@ -1,0 +1,4 @@
+{
+    "data_root": "data/cifar10",
+    "train_idx_root": "splits"
+}

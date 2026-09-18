@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# Local configuration that should remain machine-specific
+config/client_config.json
+.env
+
+# NVFLARE runtime files
+pid.fl
+transfer/
+audit.log
+log.json
+log.txt
+log_error.txt
+log_fl.txt
+
+# NVFLARE generated job directories
+????????-????-????-????-????????????/
