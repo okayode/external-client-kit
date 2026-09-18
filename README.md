@@ -137,6 +137,7 @@ This separates the permanent external client kit from the application files temp
 
 From the client-kit root:
 ```
+cd ~/external-client-kit/
 ./startup/start.sh
 ```
 The client connects to the configured central NVFlare server and waits for federated learning jobs.
