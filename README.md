@@ -2,32 +2,12 @@
 
 Reusable NVIDIA FLARE 2.7.3 client kit for connecting an external institution to a central federated learning server.
 
-The private repository contains the client application, model, training utilities, CIFAR-10 demonstration data, federated split, NVFlare startup configuration, and client credentials. Raw institutional data remain on the participating institution's infrastructure and are not transmitted to the server.
+The repository contains the client application, model, training utilities, CIFAR-10 demonstration data, federated split, NVFlare startup configuration, and client credentials. Raw institutional data remain on the participating institution's infrastructure and are not transmitted to the server.
 
 ## 1. Architecture
 
 ```text
-External Institution
-│
-└── external-client-kit/
-    ├── app/                 # Client application and model
-    ├── config/              # Client configuration
-    ├── local/               # NVFlare local configuration
-    ├── scripts/             # Data and split preparation
-    ├── src/                 # Data utilities
-    ├── data/cifar10/        # Local CIFAR-10 demonstration data
-    ├── splits/              # Local federated split
-    └── startup/             # NVFlare client identity/configuration
-        │
-        │ mTLS / federated communication
-        ▼
-    Central NVFlare Server
-    ├── Internal clients
-    └── External clients
-
-Each external institution should have its own NVFlare client identity and credentials.
-
-2. Repository Structure
+Repository Structure
 external-client-kit/
 ├── app/
 │   ├── client.py
@@ -56,9 +36,7 @@ external-client-kit/
 ├── README.md
 └── requirements.txt
 
-Generated NVFlare runtime files, logs, process IDs, job directories, and Python bytecode are excluded from Git.
-
-3. Software Requirements
+## 2. Software Requirements
 
 Validated environment:
 
@@ -71,7 +49,8 @@ NumPy 2.4.6
 Install dependencies with:
 
 pip install -r requirements.txt
-4. Prepare Local Data
+
+## 3. Prepare Local Data
 
 The repository already contains the CIFAR-10 demonstration dataset:
 
@@ -87,7 +66,7 @@ An institution may instead use its own locally stored dataset if the client appl
 
 Raw institutional data remain on the institution's infrastructure.
 
-5. Prepare the Federated Data Split
+## 4. Prepare the Federated Data Split
 
 The repository already contains the validated demonstration split:
 
@@ -105,7 +84,7 @@ Example:
 
 The institution is responsible for determining how its local data are partitioned for federated learning.
 
-6. NVFlare Startup Configuration
+## 5. NVFlare Startup Configuration
 
 The startup/ directory contains the authenticated NVFlare client configuration:
 
@@ -130,7 +109,7 @@ For a different institution, a unique NVFlare client identity and credentials sh
 
 Because this repository contains client credentials, it must remain private and access-controlled.
 
-7. Client Application and Local Data
+## 6. Client Application and Local Data
 
 NVFlare deploys the application code from:
 
@@ -151,7 +130,7 @@ splits/
 
 This separates the permanent external client kit from the application files temporarily deployed by NVFlare.
 
-8. Start the Client
+## 7. Start the Client
 
 From the client-kit root:
 
@@ -161,7 +140,7 @@ The client connects to the configured central NVFlare server and waits for feder
 
 For the current authorized institution, no additional data or split preparation is required to run the demonstrated CIFAR-10 configuration.
 
-9. Federated Learning Workflow
+## 8. Federated Learning Workflow
 Clone private client kit
         ↓
 Install requirements
@@ -182,7 +161,7 @@ Updated global model is returned
 
 Only model information required by the federated-learning protocol is exchanged. Raw local training data remain at the participating institution.
 
-10. Validated Configuration
+## 9. Validated Configuration
 
 The current kit has been validated with:
 
@@ -197,7 +176,7 @@ Status: FINISHED:COMPLETED
 
 The validated architecture uses one internal Moffitt client, one external client, and the AWS EC2 server as the aggregation server.
 
-11. Repository Security
+## 10. Repository Security
 
 This repository contains institution-specific NVFlare credentials in startup/ and is intended to remain private.
 
