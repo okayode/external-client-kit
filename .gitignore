@@ -19,3 +19,11 @@ log_fl.txt
 
 # NVFLARE generated job directories
 ????????-????-????-????-????????????/
+
+# Exp_01_UPMC: institution-specific local configuration and model artifacts
+Exp_01_UPMC/config/client_config.json
+Exp_01_UPMC/config/site_config.json
+Exp_01_UPMC/config/local_config.json
+Exp_01_UPMC/**/*.pt
+Exp_01_UPMC/**/*.pth
+Exp_01_UPMC/**/*.ckpt
