@@ -1,0 +1,476 @@
+import argparse
+import json
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+import torch
+
+from nvflare.client.config import TransferType
+from nvflare.app_opt.pt.job_config.base_fed_job import BaseFedJob
+from nvflare.app_opt.pt.in_process_client_api_executor import (
+    PTInProcessClientAPIExecutor,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+APP_DIR = REPO_ROOT / "Exp_01_UPMC" / "app"
+SCRIPTS_DIR = REPO_ROOT / "Exp_01_UPMC" / "scripts"
+
+CONTROLLER_SOURCE = SCRIPTS_DIR / "evaluating_fedavg.py"
+
+DEFAULT_MODEL = (
+    Path.home()
+    / "model_weights"
+    / "nlst_federated"
+    / "upmc_initial_model.pt"
+)
+
+# Deliberately separate from all previously exported jobs.
+DEFAULT_OUTPUT = (
+    Path.home()
+    / "nlst_fed_jobs"
+    / "Exp_01_UPMC_global_eval_v1"
+)
+
+JOB_NAME = "nlst_upmc_moffitt"
+
+REQUIRED_FILES = (
+    "client.py",
+    "data.py",
+    "model.py",
+    "train_utils.py",
+)
+
+ENTRYPOINT = '''\
+from pathlib import Path
+import runpy
+import sys
+
+app_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(app_dir))
+runpy.run_path(str(app_dir / "client.py"), run_name="__main__")
+'''
+
+
+def load_initial_artifact(path):
+    """Load and validate the existing initial model artifact."""
+    artifact = torch.load(
+        path.expanduser(),
+        map_location="cpu",
+        weights_only=False,
+    )
+
+    if not isinstance(artifact, dict):
+        raise ValueError("Initial model artifact must be a dictionary.")
+
+    if "model_state_dict" not in artifact:
+        raise ValueError(
+            "Initial artifact must contain 'model_state_dict'."
+        )
+
+    if artifact.get("num_classes") != 2:
+        raise ValueError(
+            "Expected a 2-class initial model; "
+            f"got {artifact.get('num_classes')}."
+        )
+
+    if not isinstance(artifact["model_state_dict"], dict):
+        raise TypeError("'model_state_dict' must be a dictionary.")
+
+    return artifact
+
+
+def save_and_validate_initial_checkpoint(
+    artifact,
+    model,
+    server_app,
+):
+    """Preserve the existing plain-state_dict server checkpoint setup."""
+    server_custom = server_app / "custom"
+    server_custom.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_path = server_custom / "upmc_initial_model.pt"
+
+    state_dict = {
+        key: value.detach().cpu()
+        for key, value in artifact["model_state_dict"].items()
+    }
+
+    torch.save(state_dict, checkpoint_path)
+
+    server_config_path = (
+        server_app / "config" / "config_fed_server.json"
+    )
+
+    if not server_config_path.is_file():
+        raise FileNotFoundError(
+            f"Server configuration not found: {server_config_path}"
+        )
+
+    server_config = json.loads(
+        server_config_path.read_text(encoding="utf-8")
+    )
+
+    persistors = [
+        component
+        for component in server_config["components"]
+        if component.get("id") == "persistor"
+    ]
+
+    if len(persistors) != 1:
+        raise RuntimeError(
+            "Expected exactly one server persistor; "
+            f"found {len(persistors)}."
+        )
+
+    persistors[0]["args"]["source_ckpt_file_full_name"] = (
+        "upmc_initial_model.pt"
+    )
+
+    server_config_path.write_text(
+        json.dumps(server_config, indent=4) + "\n",
+        encoding="utf-8",
+    )
+
+    # Reload the exact checkpoint and verify strict architecture compatibility.
+    saved_state = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+        weights_only=True,
+    )
+
+    model.load_state_dict(saved_state, strict=True)
+
+    print(f"Server initial checkpoint: {checkpoint_path}")
+    print("Initial checkpoint validation: PASSED")
+
+    return server_config
+
+
+def validate_export(
+    output,
+    artifact,
+    expected_persistor_id,
+):
+    """Check the exported client files, controller, and persistor."""
+    server_app = output / JOB_NAME / "app_server"
+    client_app = output / JOB_NAME / "app_clients"
+
+    required_client_files = set(REQUIRED_FILES) | {
+        "nlst_client_entry.py"
+    }
+
+    client_files = {
+        path.name
+        for path in client_app.rglob("*")
+        if path.is_file()
+    }
+
+    missing_client_files = sorted(
+        required_client_files - client_files
+    )
+
+    if missing_client_files:
+        raise RuntimeError(
+            "Missing exported client files: "
+            + ", ".join(missing_client_files)
+        )
+
+    controller_file = (
+        server_app / "custom" / "evaluating_fedavg.py"
+    )
+
+    if not controller_file.is_file():
+        raise RuntimeError(
+            f"Custom controller source missing: {controller_file}"
+        )
+
+    server_config_path = (
+        server_app / "config" / "config_fed_server.json"
+    )
+
+    server_config = json.loads(
+        server_config_path.read_text(encoding="utf-8")
+    )
+
+    controller_components = [
+        component
+        for component in server_config["components"]
+        if "EvaluatingFedAvg" in component.get("path", "")
+    ]
+
+    if len(controller_components) != 1:
+        raise RuntimeError(
+            "Expected exactly one EvaluatingFedAvg controller "
+            f"in server configuration; found {len(controller_components)}."
+        )
+
+    controller = controller_components[0]
+    controller_args = controller.get("args", {})
+
+    if controller_args.get("persistor_id") != expected_persistor_id:
+        raise RuntimeError(
+            "Custom controller persistor_id does not match "
+            "the BaseFedJob persistor."
+        )
+
+    if controller_args.get("num_clients") != 2:
+        raise RuntimeError(
+            "Expected the controller to be configured for two clients."
+        )
+
+    if controller_args.get("eval_targets") != [
+        "site-1",
+        "external-site-1",
+    ]:
+        raise RuntimeError(
+            "Unexpected evaluation targets in exported controller."
+        )
+
+    persistors = [
+        component
+        for component in server_config["components"]
+        if component.get("id") == "persistor"
+    ]
+
+    if len(persistors) != 1:
+        raise RuntimeError(
+            "Expected exactly one exported server persistor."
+        )
+
+    if (
+        persistors[0]["args"].get("source_ckpt_file_full_name")
+        != "upmc_initial_model.pt"
+    ):
+        raise RuntimeError(
+            "Initial checkpoint path was not configured correctly."
+        )
+
+    checkpoint_path = (
+        server_app / "custom" / "upmc_initial_model.pt"
+    )
+
+    if not checkpoint_path.is_file():
+        raise RuntimeError(
+            f"Initial checkpoint missing from server app: {checkpoint_path}"
+        )
+
+    saved_state = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+        weights_only=True,
+    )
+
+    if len(saved_state) != len(artifact["model_state_dict"]):
+        raise RuntimeError(
+            "Exported initial checkpoint tensor count does not match "
+            "the source artifact."
+        )
+
+    print("Export validation: PASSED")
+    print("  Client source files: present")
+    print("  Custom controller source: present")
+    print("  Custom controller registration: exactly one")
+    print("  Controller persistor reference: correct")
+    print("  Evaluation targets: correct")
+    print("  Initial checkpoint: present")
+    print("  Initial checkpoint tensor count: correct")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build the NLST federated-learning job with "
+            "post-aggregation global-model evaluation."
+        )
+    )
+
+    parser.add_argument(
+        "--initial-model",
+        type=Path,
+        default=DEFAULT_MODEL,
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+    )
+
+    parser.add_argument("--clients", type=int, default=2)
+    parser.add_argument("--min-clients", type=int, default=2)
+    parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--eval-timeout", type=int, default=3600)
+
+    args = parser.parse_args()
+
+    if args.clients != 2:
+        parser.error(
+            "This experiment requires exactly two clients."
+        )
+
+    if args.min_clients != 2:
+        parser.error(
+            "This experiment requires both clients for training."
+        )
+
+    if args.rounds < 1:
+        parser.error("--rounds must be at least 1.")
+
+    if args.eval_timeout <= 0:
+        parser.error("--eval-timeout must be positive.")
+
+    initial_model_path = args.initial_model.expanduser().resolve()
+
+    if not initial_model_path.is_file():
+        raise FileNotFoundError(
+            f"Initial model artifact not found: {initial_model_path}"
+        )
+
+    for name in REQUIRED_FILES:
+        path = APP_DIR / name
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Required experiment file missing: {path}"
+            )
+
+    if not CONTROLLER_SOURCE.is_file():
+        raise FileNotFoundError(
+            f"Custom controller source missing: {CONTROLLER_SOURCE}"
+        )
+
+    output = args.output.expanduser().resolve()
+
+    if output.exists():
+        raise FileExistsError(
+            f"Output already exists: {output}\n"
+            "Choose a new --output directory. "
+            "Existing exports will not be overwritten."
+        )
+
+    # Import the existing architecture without modifying model.py.
+    sys.path.insert(0, str(APP_DIR))
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+    from model import SybilNLSTClassifier
+    from evaluating_fedavg import EvaluatingFedAvg
+
+    artifact = load_initial_artifact(initial_model_path)
+
+    model = SybilNLSTClassifier(dropout=0.5)
+    model.load_state_dict(
+        artifact["model_state_dict"],
+        strict=True,
+    )
+    model.cpu()
+
+    # BaseFedJob registers the PyTorch model, persistor, and locator.
+    # Unlike FedAvgJob, it does not automatically register a standard
+    # FedAvg controller.
+    job = BaseFedJob(
+        initial_model=model,
+        name=JOB_NAME,
+        min_clients=args.min_clients,
+    )
+
+    persistor_id = job.comp_ids.get("persistor_id")
+
+    if not persistor_id:
+        raise RuntimeError(
+            "BaseFedJob did not register a PyTorch model persistor."
+        )
+
+    # Register our custom FedAvg controller exactly once.
+    controller = EvaluatingFedAvg(
+        num_clients=args.clients,
+        num_rounds=args.rounds,
+        persistor_id=persistor_id,
+        eval_targets=["site-1", "external-site-1"],
+        eval_timeout=args.eval_timeout,
+    )
+
+    job.to_server(controller)
+
+    # Stage the custom controller in the server app's custom directory.
+    job.add_file_to_server(
+        str(CONTROLLER_SOURCE),
+        dest_dir=None,
+        app_folder_type="custom",
+    )
+
+    # Preserve the existing client-side packaging and executor.
+    with tempfile.TemporaryDirectory(
+        prefix="nlst_global_eval_sources_"
+    ) as temp:
+        staging = Path(temp)
+
+        for name in REQUIRED_FILES:
+            shutil.copy2(
+                APP_DIR / name,
+                staging / name,
+            )
+
+        entrypoint = staging / "nlst_client_entry.py"
+        entrypoint.write_text(
+            ENTRYPOINT,
+            encoding="utf-8",
+        )
+
+        for name in (*REQUIRED_FILES, "nlst_client_entry.py"):
+            job.to(
+                str(staging / name),
+                "clients",
+            )
+
+        executor = PTInProcessClientAPIExecutor(
+            task_script_path="nlst_client_entry.py",
+            params_transfer_type=TransferType.FULL,
+        )
+
+        job.to(executor, "clients")
+
+        output.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        # Export only. This script does not submit or run the job.
+        job.export_job(str(output))
+
+    server_app = output / JOB_NAME / "app_server"
+
+    save_and_validate_initial_checkpoint(
+        artifact=artifact,
+        model=model,
+        server_app=server_app,
+    )
+
+    validate_export(
+        output=output,
+        artifact=artifact,
+        expected_persistor_id=persistor_id,
+    )
+
+    print()
+    print("========== GLOBAL-EVALUATION JOB EXPORT ==========")
+    print(f"Export directory: {output}")
+    print(f"Job name: {JOB_NAME}")
+    print(f"Clients: {args.clients}")
+    print(f"Minimum clients: {args.min_clients}")
+    print(f"Training rounds: {args.rounds}")
+    print(f"Evaluation targets: site-1, external-site-1")
+    print(f"Evaluation timeout: {args.eval_timeout} seconds")
+    print(f"Persistor ID: {persistor_id}")
+    print(f"Initial architecture: {artifact.get('architecture')}")
+    print(
+        "Initial model tensors: "
+        f"{len(artifact['model_state_dict'])}"
+    )
+    print()
+    print("JOB EXPORTED AND VALIDATED.")
+    print("No job was submitted or executed.")
+
+
+if __name__ == "__main__":
+    main()
