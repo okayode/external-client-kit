@@ -27,3 +27,11 @@ Exp_01_UPMC/config/local_config.json
 Exp_01_UPMC/**/*.pt
 Exp_01_UPMC/**/*.pth
 Exp_01_UPMC/**/*.ckpt
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Local backup files
+*.bak
+*.bak_*

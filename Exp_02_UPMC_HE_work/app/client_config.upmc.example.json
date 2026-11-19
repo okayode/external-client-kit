@@ -1,0 +1,16 @@
+{
+  "data_root": "~/NLST_UPMC",
+  "batch_size": 2,
+  "val_fraction": 0.15,
+  "seed": 42,
+  "num_workers": 4,
+  "local_epochs": 1,
+  "total_rounds": 12,
+  "lr_backbone": 0.000002,
+  "lr_head": 0.0005,
+  "weight_decay": 0.005,
+  "warmup_epochs": 2,
+  "max_grad_norm": 5.0,
+  "threshold": 0.5,
+  "amp": true
+}

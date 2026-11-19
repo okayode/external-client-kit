@@ -571,17 +571,39 @@ def main(args):
             )
 
             print(
-                f"[{site_name}] Round {round_num} held-out test: "
-                f"n={eval_metrics['n']}, "
-                f"ROC-AUC={eval_metrics['roc_auc']:.4f}, "
-                f"PR-AUC={eval_metrics['pr_auc']:.4f}, "
-                f"balanced accuracy="
-                f"{eval_metrics['balanced_accuracy']:.4f}, "
-                f"ROC-AUC 95% CI="
-                f"({eval_metrics['roc_auc_ci_low']:.4f}, "
-                f"{eval_metrics['roc_auc_ci_high']:.4f})",
+                "[{}] Round {} held-out test: "
+                "n={}, ROC-AUC={:.4f}, PR-AUC={:.4f}, "
+                "balanced accuracy={:.4f}, "
+                "ROC-AUC 95% CI=({:.4f}, {:.4f}), "
+                "sensitivity={:.4f}, specificity={:.4f}".format(
+                    site_name,
+                    round_num,
+                    eval_metrics["n"],
+                    eval_metrics["roc_auc"],
+                    eval_metrics["pr_auc"],
+                    eval_metrics["balanced_accuracy"],
+                    eval_metrics["roc_auc_ci_low"],
+                    eval_metrics["roc_auc_ci_high"],
+                    eval_metrics["sensitivity"],
+                    eval_metrics["specificity"],
+                ),
                 flush=True,
             )
+
+            # print(
+            #     f"[{site_name}] Round {round_num} held-out test: "
+            #     f"n={eval_metrics['n']}, "
+            #     f"ROC-AUC={eval_metrics['roc_auc']:.4f}, "
+            #     f"PR-AUC={eval_metrics['pr_auc']:.4f}, "
+            #     f"balanced accuracy="
+            #     f"{eval_metrics['balanced_accuracy']:.4f}, "
+            #     f"ROC-AUC 95% CI="
+            #     f"({eval_metrics['roc_auc_ci_low']:.4f}, "
+            #     f"{eval_metrics['roc_auc_ci_high']:.4f}),"
+            #     f"sensitivity={eval_metrics['sensitivity']:.4f}, "
+            #     f"specificity={eval_metrics['specificity']:.4f}, "
+            #     flush=True,
+            # )
 
             # Only acknowledgement and site identifier leave this client.
             flare.send(
@@ -740,13 +762,32 @@ def main(args):
         )
 
         print(
-            f"[{site_name}] Round {round_num} validation: "
-            f"loss={val_metrics['loss']:.4f}, "
-            f"accuracy={val_metrics['accuracy']:.4f}, "
-            f"ROC-AUC={val_metrics['roc_auc']:.4f}, "
-            f"PR-AUC={val_metrics['pr_auc']:.4f}",
+            "[{}] Round {} validation: "
+            "loss={:.4f}, accuracy={:.4f}, ROC-AUC={:.4f}, "
+            "PR-AUC={:.4f}, sensitivity={:.4f}, "
+            "specificity={:.4f}".format(
+                site_name,
+                round_num,
+                val_metrics["loss"],
+                val_metrics["accuracy"],
+                val_metrics["roc_auc"],
+                val_metrics["pr_auc"],
+                val_metrics["sensitivity"],
+                val_metrics["specificity"],
+            ),
             flush=True,
         )
+
+        # print(
+        #     f"[{site_name}] Round {round_num} validation: "
+        #     f"loss={val_metrics['loss']:.4f}, "
+        #     f"accuracy={val_metrics['accuracy']:.4f}, "
+        #     f"ROC-AUC={val_metrics['roc_auc']:.4f}, "
+        #     f"PR-AUC={val_metrics['pr_auc']:.4f},"
+        #     f"sensitivity={val_metrics['sensitivity']:.4f}, "
+        #     f"specificity={val_metrics['specificity']:.4f}",
+        #     flush=True,
+        # )
 
         # ----------------------------------------------------
         # MODEL DELTA CALCULATION

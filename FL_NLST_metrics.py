@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python3
 """
 Plot validation and held-out test metrics from an NVFlare NLST client log.
@@ -23,6 +25,16 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.size": 9,
+    "axes.titlesize": 10,
+    "axes.labelsize": 9,
+    "figure.titlesize": 12,
+    "savefig.facecolor": "white",
+})
 
 
 TIMESTAMP_RE = re.compile(
@@ -52,6 +64,24 @@ HELDOUT_RE = re.compile(
     r"ROC-AUC 95% CI=\((?P<ci_low>[-+0-9.eE]+),\s*"
     r"(?P<ci_high>[-+0-9.eE]+)\)"
 )
+
+SENSITIVITY_RE = re.compile(
+    r"\bsensitivity\s*[=:]\s*(?P<value>[-+0-9.eE]+)",
+    re.IGNORECASE,
+)
+
+SPECIFICITY_RE = re.compile(
+    r"\bspecificity\s*[=:]\s*(?P<value>[-+0-9.eE]+)",
+    re.IGNORECASE,
+)
+
+# SENSITIVITY_RE = re.compile(
+#     r"\\bsensitivity\\s*[=:]\\s*(?P<value>[-+0-9.eE]+)", re.IGNORECASE
+# )
+# SPECIFICITY_RE = re.compile(
+#     r"\\bspecificity\\s*[=:]\\s*(?P<value>[-+0-9.eE]+)", re.IGNORECASE
+# )
+
 
 
 def parse_timestamp(line: str):
@@ -94,12 +124,18 @@ def parse_log(log_path: Path) -> pd.DataFrame:
                 row = records.setdefault(round_number, {"round": round_number})
                 for key in ("loss", "accuracy", "roc_auc", "pr_auc"):
                     row[key] = float(match.group(key))
+                sensitivity_match = SENSITIVITY_RE.search(message)
+                specificity_match = SPECIFICITY_RE.search(message)
+                if sensitivity_match:
+                    row["sensitivity"] = float(sensitivity_match.group("value"))
+                if specificity_match:
+                    row["specificity"] = float(specificity_match.group("value"))
                 if timestamp and round_train_start.get(round_number):
-                    row["validation_elapsed_min"] = (
+                    row["validation_elapsed_secs"] = (
                         timestamp - round_train_start[round_number]
-                    ).total_seconds() / 60.0
+                    ).total_seconds()
                 else:
-                    row["validation_elapsed_min"] = np.nan
+                    row["validation_elapsed_secs"] = np.nan
 
             match = EVAL_START_RE.search(message)
             if match:
@@ -117,12 +153,18 @@ def parse_log(log_path: Path) -> pd.DataFrame:
                         int(match.group(key)) if key == "n"
                         else float(match.group(key))
                     )
+                sensitivity_match = SENSITIVITY_RE.search(message)
+                specificity_match = SPECIFICITY_RE.search(message)
+                if sensitivity_match:
+                    row["test_sensitivity"] = float(sensitivity_match.group("value"))
+                if specificity_match:
+                    row["test_specificity"] = float(specificity_match.group("value"))
                 if timestamp and round_eval_start.get(round_number):
-                    row["test_elapsed_min"] = (
+                    row["test_elapsed_secs"] = (
                         timestamp - round_eval_start[round_number]
-                    ).total_seconds() / 60.0
+                    ).total_seconds()
                 else:
-                    row["test_elapsed_min"] = np.nan
+                    row["test_elapsed_secs"] = np.nan
 
     if not records:
         raise ValueError("No round metrics were found in the log.")
@@ -139,43 +181,63 @@ def parse_log(log_path: Path) -> pd.DataFrame:
     return df
 
 
+def style_axis(ax, ylabel: str, *, time_axis: bool = False) -> None:
+    """Apply consistent axis formatting."""
+    ax.set_xlabel("Federated rounds")
+    ax.set_ylabel(ylabel)
+    if not time_axis:
+        ax.set_ylim(0.45, 1)
+    else:
+        y_min, y_max = ax.get_ylim()
+        ax.set_ylim(np.floor(y_min), np.ceil(y_max))
+
+    ax.grid(axis="y", alpha=0.22, linewidth=0.6)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(axis="both", labelsize=8)
+
+
 def plot_validation(df: pd.DataFrame, output_path: Path) -> None:
-    """Create the five-panel validation figure."""
+    """Create validation plots, including sensitivity/specificity when logged."""
     metrics = [
-        ("loss", "Validation loss", "Loss"),
-        ("accuracy", "Validation accuracy", "Accuracy"),
-        ("roc_auc", "Validation ROC-AUC", "ROC-AUC"),
-        ("pr_auc", "Validation PR-AUC", "PR-AUC"),
-        ("validation_elapsed_min", "Round time through validation", "Elapsed time (minutes)"),
+        ("loss", "Validation loss", "Loss", False),
+        ("accuracy", "Validation accuracy", "Accuracy", False),
+        ("roc_auc", "Validation ROC-AUC", "ROC-AUC", False),
+        ("pr_auc", "Validation PR-AUC", "PR-AUC", False),
+        ("sensitivity", "Validation sensitivity", "Sensitivity", False),
+        ("specificity", "Validation specificity", "Specificity", False),
+        ("validation_elapsed_secs", "Round time through validation",
+         "Elapsed time (seconds)", True),
     ]
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8.5))
+    fig, axes = plt.subplots(2, 4, figsize=(12, 6.5))
     axes = axes.ravel()
 
-    for ax, (column, title, ylabel) in zip(axes, metrics):
+    for ax, (column, title, ylabel, is_time) in zip(axes, metrics):
         if column not in df.columns or df[column].notna().sum() == 0:
-            ax.text(0.5, 0.5, "Metric not found in log",
-                    ha="center", va="center", transform=ax.transAxes)
+            ax.text(0.5, 0.5, "Metric unavailable", ha="center",
+                    va="center", transform=ax.transAxes, fontsize=9)
         else:
             valid = df.dropna(subset=[column])
-            ax.plot(valid["round"], valid[column], marker="o", linewidth=2)
+            ax.plot(valid["round"], valid[column], marker=".",
+                    linewidth=1.8, markersize=4)
             ax.set_xticks(df["round"].dropna().astype(int).unique())
-            ax.grid(True, alpha=0.3)
-        ax.set_title(title)
-        ax.set_xlabel("Federated round")
-        ax.set_ylabel(ylabel)
+        ax.set_title(title, fontsize=10, pad=6)
+        style_axis(ax, ylabel, time_axis=is_time)
+        if column in ("sensitivity", "specificity"):
+            ax.set_ylim(0, 1)
 
-    axes[-1].set_visible(False)
-    fig.suptitle("NLST Federated Learning — Validation Metrics", fontsize=15)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    axes[7].set_visible(False)
+    fig.suptitle("NLST Non-HE Federated Learning: Validation Metrics (Moffitt)", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(output_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_heldout(df: pd.DataFrame, output_path: Path) -> None:
-    """Create the five-panel held-out test figure."""
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8.5))
+    """Create held-out test plots, including sensitivity/specificity when logged."""
+    fig, axes = plt.subplots(2, 4, figsize=(12, 6.5))
     axes = axes.ravel()
+    rounds = df["round"].dropna().astype(int).unique()
 
     metrics = [
         ("test_roc_auc", "Held-out test ROC-AUC", "ROC-AUC"),
@@ -186,66 +248,69 @@ def plot_heldout(df: pd.DataFrame, output_path: Path) -> None:
 
     for ax, (column, title, ylabel) in zip(axes[:3], metrics):
         if column not in df.columns or df[column].notna().sum() == 0:
-            ax.text(0.5, 0.5, "Metric not found in log",
-                    ha="center", va="center", transform=ax.transAxes)
+            ax.text(0.5, 0.5, "Metric unavailable", ha="center",
+                    va="center", transform=ax.transAxes, fontsize=9)
         else:
             valid = df.dropna(subset=[column])
-            ax.plot(valid["round"], valid[column], marker="o", linewidth=2)
-            ax.set_xticks(df["round"].dropna().astype(int).unique())
-            ax.grid(True, alpha=0.3)
-        ax.set_title(title)
-        ax.set_xlabel("Federated round")
-        ax.set_ylabel(ylabel)
+            ax.plot(valid["round"], valid[column], marker=".",
+                    linewidth=1.8, markersize=4)
+            ax.set_xticks(rounds)
+        ax.set_title(title, fontsize=10, pad=6)
+        style_axis(ax, ylabel)
 
-    # Display the ROC-AUC confidence interval as the fourth panel.
     ax = axes[3]
     ci = df.dropna(subset=["test_ci_low", "test_ci_high"])
     if ci.empty:
-        ax.text(0.5, 0.5, "ROC-AUC confidence intervals not found",
-                ha="center", va="center", transform=ax.transAxes)
+        ax.text(0.5, 0.5, "Confidence intervals unavailable",
+                ha="center", va="center", transform=ax.transAxes, fontsize=9)
     else:
-        center = (ci["test_ci_low"] + ci["test_ci_high"]) / 2.0
-        ax.fill_between(
-            ci["round"].to_numpy(),
-            ci["test_ci_low"].to_numpy(),
-            ci["test_ci_high"].to_numpy(),
-            alpha=0.2,
-            label="95% CI",
-        )
-        ax.plot(ci["round"], center, marker="o", linewidth=2,
-                label="CI midpoint")
-        ax.plot(ci["round"], ci["test_ci_low"], linestyle="--",
-                linewidth=1, label="Lower bound")
-        ax.plot(ci["round"], ci["test_ci_high"], linestyle="--",
-                linewidth=1, label="Upper bound")
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-        ax.set_xticks(df["round"].dropna().astype(int).unique())
-    ax.set_title("Held-out test ROC-AUC 95% CI")
-    ax.set_xlabel("Federated round")
-    ax.set_ylabel("ROC-AUC confidence interval")
+        center = (ci["test_ci_low"] + ci["test_ci_high"]) / 2
+        ax.fill_between(ci["round"].to_numpy(), ci["test_ci_low"].to_numpy(),
+                        ci["test_ci_high"].to_numpy(), alpha=0.18,
+                        label="95% CI")
+        ax.plot(ci["round"], center, marker=".", linewidth=1.8,
+                markersize=4, label="Midpoint")
+        ax.plot(ci["round"], ci["test_ci_low"], "--", linewidth=1,
+                color="none") #, label="Lower bound")
+        ax.plot(ci["round"], ci["test_ci_high"], "--", linewidth=1,
+                color="none") #, label="Upper bound")
+        ax.legend(frameon=False, fontsize=8)
+        ax.set_xticks(rounds)
+    ax.set_title("Held-out test ROC-AUC 95% CI", fontsize=10, pad=6)
+    style_axis(ax, "ROC-AUC")
 
-    # Fifth panel: time required for the global-model evaluation task.
     ax = axes[4]
-    if "test_elapsed_min" not in df.columns or df["test_elapsed_min"].notna().sum() == 0:
-        ax.text(0.5, 0.5, "Evaluation timing not found in log",
-                ha="center", va="center", transform=ax.transAxes)
+    if "test_elapsed_secs" not in df.columns or df["test_elapsed_secs"].notna().sum() == 0:
+        ax.text(0.5, 0.5, "Evaluation timing unavailable",
+                ha="center", va="center", transform=ax.transAxes, fontsize=9)
     else:
-        valid = df.dropna(subset=["test_elapsed_min"])
-        ax.plot(valid["round"], valid["test_elapsed_min"],
-                marker="o", linewidth=2)
-        ax.set_xticks(df["round"].dropna().astype(int).unique())
-        ax.grid(True, alpha=0.3)
-    ax.set_title("Global-model test evaluation time")
-    ax.set_xlabel("Federated round")
-    ax.set_ylabel("Elapsed time (minutes)")
+        valid = df.dropna(subset=["test_elapsed_secs"])
+        ax.plot(valid["round"], valid["test_elapsed_secs"], marker=".",
+                linewidth=1.8, markersize=4)
+        ax.set_xticks(rounds)
+    ax.set_title("Global-model test evaluation time", fontsize=10, pad=6)
+    style_axis(ax, "Elapsed time (seconds)", time_axis=True)
 
-    # The sixth panel is unused.
-    axes[5].set_visible(False)
+    for ax, column, title, ylabel in (
+        (axes[5], "test_sensitivity", "Held-out test sensitivity", "Sensitivity"),
+        (axes[6], "test_specificity", "Held-out test specificity", "Specificity"),
+    ):
+        if column not in df.columns or df[column].notna().sum() == 0:
+            ax.text(0.5, 0.5, "Metric unavailable", ha="center",
+                    va="center", transform=ax.transAxes, fontsize=9)
+        else:
+            valid = df.dropna(subset=[column])
+            ax.plot(valid["round"], valid[column], marker=".",
+                    linewidth=1.8, markersize=4)
+            ax.set_xticks(rounds)
+        ax.set_title(title, fontsize=10, pad=6)
+        style_axis(ax, ylabel)
+        ax.set_ylim(0, 1)
 
-    fig.suptitle("NLST Federated Learning — Held-out Test Metrics", fontsize=15)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    axes[7].set_visible(False)
+    fig.suptitle("NLST Non-HE Federated Learning: Held-out Test Metrics (Moffitt)", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(output_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -290,9 +355,10 @@ def main() -> int:
     display_columns = [
         column for column in (
             "round", "loss", "accuracy", "roc_auc", "pr_auc",
-            "validation_elapsed_min", "test_roc_auc", "test_pr_auc",
-            "test_balanced_accuracy", "test_ci_low", "test_ci_high",
-            "test_elapsed_min",
+            "sensitivity", "specificity", "validation_elapsed_secs",
+            "test_roc_auc", "test_pr_auc", "test_balanced_accuracy",
+            "test_sensitivity", "test_specificity", "test_ci_low",
+            "test_ci_high", "test_elapsed_secs",
         ) if column in df.columns
     ]
     print(df[display_columns].to_string(index=False))
